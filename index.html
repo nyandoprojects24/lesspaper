@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>紙使用量削減！</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+
+    <!-- A-Frame + AR.js -->
+    <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+
+    <!-- Texture processing -->
+    <script>
+      AFRAME.registerComponent('fix-textures', {
+        schema: {
+          anisotropy: {type: 'int', default: 8},
+          useMipmaps: {type: 'boolean', default: false}, 
+          minFilter:  {type: 'string',  default: 'LinearFilter'} 
+        },
+        init: function () {
+          const THREE = AFRAME.THREE;
+          const mapFilter = {
+            LinearFilter: THREE.LinearFilter,
+            NearestFilter: THREE.NearestFilter,
+            LinearMipmapLinearFilter: THREE.LinearMipmapLinearFilter,
+            LinearMipmapNearestFilter: THREE.LinearMipmapNearestFilter,
+            NearestMipmapNearestFilter: THREE.NearestMipmapNearestFilter,
+            NearestMipmapLinearFilter: THREE.NearestMipmapLinearFilter
+          };
+
+          this.el.addEventListener('model-loaded', () => {
+            const renderer = this.el.sceneEl.renderer;
+            const maxAniso = renderer && renderer.capabilities ? renderer.capabilities.getMaxAnisotropy() : 1;
+            const targetAniso = Math.min(this.data.anisotropy, maxAniso || 1);
+
+            this.el.object3D.traverse((obj) => {
+              if (!obj.isMesh || !obj.material) return;
+              const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+
+              mats.forEach((mat) => {
+                ['map','metalnessMap','roughnessMap','normalMap','emissiveMap','aoMap'].forEach((k) => {
+                  const tex = mat[k];
+                  if (!tex) return;
+
+                  tex.wrapS = THREE.ClampToEdgeWrapping;
+                  tex.wrapT = THREE.ClampToEdgeWrapping;
+
+                  // Mipmaps & filtering
+                  if (!this.data.useMipmaps) {
+                    tex.generateMipmaps = false;
+                    tex.minFilter = THREE.LinearFilter;
+                  } else {
+                    tex.generateMipmaps = true;
+                    tex.minFilter = mapFilter[this.data.minFilter] || THREE.LinearMipmapLinearFilter;
+                  }
+                  tex.magFilter = THREE.LinearFilter;
+
+                  // Sharpen at glancing angles
+                  tex.anisotropy = targetAniso;
+
+                  tex.needsUpdate = true;
+                });
+
+              });
+            });
+          });
+        }
+      });
+    </script>
+  </head>
+
+  <body style="margin:0; overflow:hidden;">
+    <a-scene
+      embedded
+      renderer="precision: high; antialias: true; logarithmicDepthBuffer: true"
+      arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false; detectionMode: mono; maxDetectionRate: 30"
+      vr-mode-ui="enabled: false"
+    >
+      <!-- Marker -->
+      <a-marker
+        type="pattern"
+        url="p_poster.patt"
+        smooth="true"
+        smoothCount="8"
+        smoothTolerance="0.01"
+        smoothThreshold="5"
+      >
+        <a-entity
+          id="model"
+          gltf-model="poster.glb"
+          scale="0.5 0.5 0.5"
+          rotation="0 0 0"
+          animation-mixer
+          animation="property: rotation; to: 0 360 0; loop: true; dur: 8000; easing: linear"
+          fix-textures="anisotropy: 8; useMipmaps: false; minFilter: LinearMipmapLinearFilter"
+        ></a-entity>
+      </a-marker>
+
+      <a-entity camera></a-entity>
+    </a-scene>
+  </body>
+</html>
