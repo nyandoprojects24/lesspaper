@@ -1,90 +1,100 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Lesspaper AR</title>
+    <title>紙使用量削減！北川鉄工所 STEG電装課</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
 
-    <!-- A-Frame + AR.js (pattern marker build) -->
+    <!-- A-Frame + AR.js -->
     <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js/aframe/build/aframe-ar.min.js"></script>
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
 
-    <style>
-      body {
-        margin: 0;
-        overflow: hidden;
-      }
-      #loading {
-        position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        color: white;
-        font-family: sans-serif;
-        font-size: 16px;
-        background: rgba(0, 0, 0, 0.6);
-        padding: 10px 20px;
-        border-radius: 8px;
-      }
-    </style>
+    <!-- Texture processing -->
+    <script>
+      AFRAME.registerComponent('fix-textures', {
+        schema: {
+          anisotropy: {type: 'int', default: 8},
+          useMipmaps: {type: 'boolean', default: false}, 
+          minFilter:  {type: 'string',  default: 'LinearFilter'} 
+        },
+        init: function () {
+          const THREE = AFRAME.THREE;
+          const mapFilter = {
+            LinearFilter: THREE.LinearFilter,
+            NearestFilter: THREE.NearestFilter,
+            LinearMipmapLinearFilter: THREE.LinearMipmapLinearFilter,
+            LinearMipmapNearestFilter: THREE.LinearMipmapNearestFilter,
+            NearestMipmapNearestFilter: THREE.NearestMipmapNearestFilter,
+            NearestMipmapLinearFilter: THREE.NearestMipmapLinearFilter
+          };
+
+          this.el.addEventListener('model-loaded', () => {
+            const renderer = this.el.sceneEl.renderer;
+            const maxAniso = renderer && renderer.capabilities ? renderer.capabilities.getMaxAnisotropy() : 1;
+            const targetAniso = Math.min(this.data.anisotropy, maxAniso || 1);
+
+            this.el.object3D.traverse((obj) => {
+              if (!obj.isMesh || !obj.material) return;
+              const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+
+              mats.forEach((mat) => {
+                ['map','metalnessMap','roughnessMap','normalMap','emissiveMap','aoMap'].forEach((k) => {
+                  const tex = mat[k];
+                  if (!tex) return;
+
+                  tex.wrapS = THREE.ClampToEdgeWrapping;
+                  tex.wrapT = THREE.ClampToEdgeWrapping;
+
+                  // Mipmaps & filtering
+                  if (!this.data.useMipmaps) {
+                    tex.generateMipmaps = false;
+                    tex.minFilter = THREE.LinearFilter;
+                  } else {
+                    tex.generateMipmaps = true;
+                    tex.minFilter = mapFilter[this.data.minFilter] || THREE.LinearMipmapLinearFilter;
+                  }
+                  tex.magFilter = THREE.LinearFilter;
+
+                  // Sharpen at glancing angles
+                  tex.anisotropy = targetAniso;
+
+                  tex.needsUpdate = true;
+                });
+
+              });
+            });
+          });
+        }
+      });
+    </script>
   </head>
 
-  <body>
-    <div id="loading">Loading AR environment...</div>
-
+  <body style="margin:0; overflow:hidden;">
     <a-scene
       embedded
-      renderer="alpha: true; antialias: true"
-      arjs="trackingMethod: best; sourceType: webcam; facingMode: environment; debugUIEnabled: false;"
+      renderer="precision: high; antialias: true; logarithmicDepthBuffer: true"
+      arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false; detectionMode: mono; maxDetectionRate: 30"
       vr-mode-ui="enabled: false"
     >
       <!-- Marker -->
       <a-marker
-        id="marker"
         type="pattern"
         url="p_poster.patt"
-        emitevents="true"
         smooth="true"
-        smoothCount="15"
+        smoothCount="20"
         smoothTolerance="0.01"
-        smoothThreshold="8"
-      >
-      </a-marker>
-
-      <!-- Smoothed container (stabilized model) -->
-      <a-entity
-        id="smoothed"
-        visible="false"
-        smoothed-controls="markerEl: #marker; lerpPosition: 0.2; lerpRotation: 0.2; lerpScale: 0.2"
+        smoothThreshold="5"
       >
         <a-entity
+          id="model"
           gltf-model="poster.glb"
-          position="0 0 0"
+          scale="1.0 1.0 1.0"
           rotation="0 0 0"
-          scale="0.6 0.6 0.6"
+          fix-textures="anisotropy: 8; useMipmaps: false; minFilter: LinearMipmapLinearFilter"
         ></a-entity>
-      </a-entity>
+      </a-marker>
 
       <a-entity camera></a-entity>
     </a-scene>
-
-    <script>
-      const marker = document.querySelector("#marker");
-      const smoothed = document.querySelector("#smoothed");
-      const loading = document.querySelector("#loading");
-
-      // Hide loading text when AR.js initializes
-      window.addEventListener("arjs-video-loaded", () => {
-        loading.style.display = "none";
-      });
-
-      // Toggle visibility for stability
-      marker.addEventListener("markerFound", () => {
-        smoothed.setAttribute("visible", true);
-      });
-      marker.addEventListener("markerLost", () => {
-        smoothed.setAttribute("visible", false);
-      });
-    </script>
   </body>
 </html>
