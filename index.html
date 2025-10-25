@@ -1,100 +1,74 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <title>紙使用量削減！北川鉄工所 STEG電装課</title>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AR.js Auto-Lock</title>
 
-    <!-- A-Frame + AR.js -->
-    <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
-    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+  <!-- A-Frame + AR.js (pattern-marker build) -->
+  <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js/aframe/build/aframe-ar.min.js"></script>
 
-    <!-- Texture processing -->
-    <script>
-      AFRAME.registerComponent('fix-textures', {
-        schema: {
-          anisotropy: {type: 'int', default: 8},
-          useMipmaps: {type: 'boolean', default: false}, 
-          minFilter:  {type: 'string',  default: 'LinearFilter'} 
-        },
-        init: function () {
-          const THREE = AFRAME.THREE;
-          const mapFilter = {
-            LinearFilter: THREE.LinearFilter,
-            NearestFilter: THREE.NearestFilter,
-            LinearMipmapLinearFilter: THREE.LinearMipmapLinearFilter,
-            LinearMipmapNearestFilter: THREE.LinearMipmapNearestFilter,
-            NearestMipmapNearestFilter: THREE.NearestMipmapNearestFilter,
-            NearestMipmapLinearFilter: THREE.NearestMipmapLinearFilter
-          };
+  <style>html,body{margin:0;height:100%;overflow:hidden;}</style>
+</head>
+<body>
+  <a-scene
+    embedded
+    renderer="alpha: true; antialias: true"
+    arjs="trackingMethod: best; sourceType: webcam; facingMode: environment; debugUIEnabled: false;"
+    vr-mode-ui="enabled: false">
 
-          this.el.addEventListener('model-loaded', () => {
-            const renderer = this.el.sceneEl.renderer;
-            const maxAniso = renderer && renderer.capabilities ? renderer.capabilities.getMaxAnisotropy() : 1;
-            const targetAniso = Math.min(this.data.anisotropy, maxAniso || 1);
+    <!-- Marker (events + initial smoothing only to get a clean first pose) -->
+    <a-marker id="marker"
+              type="pattern"
+              url="p_poster.patt"
+              emitevents="true"
+              smooth="true" smoothCount="15" smoothTolerance="0.01" smoothThreshold="8">
+    </a-marker>
 
-            this.el.object3D.traverse((obj) => {
-              if (!obj.isMesh || !obj.material) return;
-              const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+    <!-- This follower tracks the marker until we lock it, then stops updating -->
+    <a-entity id="smoothed"
+              visible="false"
+              smoothed-controls="markerEl: #marker; lerpPosition: 0.2; lerpRotation: 0.2; lerpScale: 0.2">
+      <a-entity gltf-model="poster.glb"
+                position="0 0 0"
+                rotation="0 0 0"
+                scale="0.6 0.6 0.6"></a-entity>
+    </a-entity>
 
-              mats.forEach((mat) => {
-                ['map','metalnessMap','roughnessMap','normalMap','emissiveMap','aoMap'].forEach((k) => {
-                  const tex = mat[k];
-                  if (!tex) return;
+    <a-entity camera></a-entity>
+  </a-scene>
 
-                  tex.wrapS = THREE.ClampToEdgeWrapping;
-                  tex.wrapT = THREE.ClampToEdgeWrapping;
+  <script>
+    const marker = document.querySelector('#marker');
+    const smoothed = document.querySelector('#smoothed');
+    let locked = false;
 
-                  // Mipmaps & filtering
-                  if (!this.data.useMipmaps) {
-                    tex.generateMipmaps = false;
-                    tex.minFilter = THREE.LinearFilter;
-                  } else {
-                    tex.generateMipmaps = true;
-                    tex.minFilter = mapFilter[this.data.minFilter] || THREE.LinearMipmapLinearFilter;
-                  }
-                  tex.magFilter = THREE.LinearFilter;
+    // Show model when marker is seen; on first time, freeze its transform.
+    marker.addEventListener('markerFound', () => {
+      smoothed.setAttribute('visible', true);
 
-                  // Sharpen at glancing angles
-                  tex.anisotropy = targetAniso;
+      if (!locked) {
+        // Let smoothed-controls settle for ~2 frames, then freeze.
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            const p = smoothed.object3D.position.clone();
+            const r = smoothed.object3D.rotation.clone();
 
-                  tex.needsUpdate = true;
-                });
+            // Remove the tracking component -> stops following the marker.
+            smoothed.removeAttribute('smoothed-controls');
 
-              });
-            });
+            // Re-apply the last settled transform (absolute lock).
+            smoothed.object3D.position.copy(p);
+            smoothed.object3D.rotation.copy(r);
+
+            locked = true;
           });
-        }
-      });
-    </script>
-  </head>
+        });
+      }
+    });
 
-  <body style="margin:0; overflow:hidden;">
-    <a-scene
-      embedded
-      renderer="precision: high; antialias: true; logarithmicDepthBuffer: true"
-      arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false; detectionMode: mono; maxDetectionRate: 30"
-      vr-mode-ui="enabled: false"
-    >
-      <!-- Marker -->
-      <a-marker
-        type="pattern"
-        url="p_poster.patt"
-        smooth="true"
-        smoothCount="8"
-        smoothTolerance="0.01"
-        smoothThreshold="5"
-      >
-        <a-entity
-          id="model"
-          gltf-model="poster1.glb"
-          scale="1.0 1.0 1.0"
-          rotation="0 0 0"
-          fix-textures="anisotropy: 8; useMipmaps: false; minFilter: LinearMipmapLinearFilter"
-        ></a-entity>
-      </a-marker>
-
-      <a-entity camera></a-entity>
-    </a-scene>
-  </body>
+    // No markerLost handler: once locked, it simply stays visible and fixed.
+  </script>
+</body>
 </html>
