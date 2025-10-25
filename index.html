@@ -67,33 +67,33 @@
         }
       });
     
-    const marker = document.querySelector('#marker');
-    const smoothed = document.querySelector('#smoothed');
-    let locked = false;
+      const marker = document.querySelector('#marker');
+      const smoothed = document.querySelector('#smoothed');
+      let locked = false;
 
     // Show model when marker is seen; on first time, freeze its transform.
-    marker.addEventListener('markerFound', () => {
-      smoothed.setAttribute('visible', true);
+      marker.addEventListener('markerFound', () => {
+        smoothed.setAttribute('visible', true);
 
-      if (!locked) {
+        if (!locked) {
         // Let smoothed-controls settle for ~2 frames, then freeze.
-        requestAnimationFrame(() => {
           requestAnimationFrame(() => {
-            const p = smoothed.object3D.position.clone();
-            const r = smoothed.object3D.rotation.clone();
+            requestAnimationFrame(() => {
+              const p = smoothed.object3D.position.clone();
+              const r = smoothed.object3D.rotation.clone();
 
             // Remove the tracking component -> stops following the marker.
-            smoothed.removeAttribute('smoothed-controls');
+              smoothed.removeAttribute('smoothed-controls');
 
             // Re-apply the last settled transform (absolute lock).
-            smoothed.object3D.position.copy(p);
-            smoothed.object3D.rotation.copy(r);
+              smoothed.object3D.position.copy(p);
+              smoothed.object3D.rotation.copy(r);
 
-            locked = true;
+              locked = true;
+            });
           });
-        });
-      }
-    });
+        }
+      });
     </script>
   </head>
 
@@ -126,4 +126,5 @@
     </a-scene>
   </body>
 </html>
+
 
