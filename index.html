@@ -1,102 +1,81 @@
-<!DOCTYPE html>
 <html>
   <head>
-    <title>紙使用量削減！北川鉄工所 STEG電装課</title>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-
-    <!-- A-Frame + AR.js -->
-    <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
-    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
-
-    <!-- Texture processing -->
+    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.5/aframe/build/aframe-ar.js"></script>
     <script>
-      AFRAME.registerComponent('fix-textures', {
-        schema: {
-          anisotropy: {type: 'int', default: 8},
-          useMipmaps: {type: 'boolean', default: false}, 
-          minFilter:  {type: 'string',  default: 'LinearFilter'} 
-        },
-        init: function () {
-          const THREE = AFRAME.THREE;
-          const mapFilter = {
-            LinearFilter: THREE.LinearFilter,
-            NearestFilter: THREE.NearestFilter,
-            LinearMipmapLinearFilter: THREE.LinearMipmapLinearFilter,
-            LinearMipmapNearestFilter: THREE.LinearMipmapNearestFilter,
-            NearestMipmapNearestFilter: THREE.NearestMipmapNearestFilter,
-            NearestMipmapLinearFilter: THREE.NearestMipmapLinearFilter
-          };
-
+      // Simple component to disable frustum culling on a glTF once loaded
+      AFRAME.registerComponent('no-frustum-cull', {
+        init() {
           this.el.addEventListener('model-loaded', () => {
-            const renderer = this.el.sceneEl.renderer;
-            const maxAniso = renderer && renderer.capabilities ? renderer.capabilities.getMaxAnisotropy() : 1;
-            const targetAniso = Math.min(this.data.anisotropy, maxAniso || 1);
+            this.el.object3D.traverse(o => { if (o.isMesh) o.frustumCulled = false; });
+          });
+        }
+      });
+      // Debounce marker visibility: show after N stable frames
+      AFRAME.registerComponent('debounced-visibility', {
+        schema: { stableFrames: {default: 5} },
+        init() {
+          let stable = 0;
+          const target = this.el;
+          target.object3D.visible = false;
 
-            this.el.object3D.traverse((obj) => {
-              if (!obj.isMesh || !obj.material) return;
-              const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+          target.addEventListener('markerFound', () => {
+            stable = 0;
+            this.tick = () => {
+              if (stable < this.data.stableFrames) {
+                stable++;
+                if (stable >= this.data.stableFrames) target.object3D.visible = true;
+              }
+            };
+          });
 
-              mats.forEach((mat) => {
-                ['map','metalnessMap','roughnessMap','normalMap','emissiveMap','aoMap'].forEach((k) => {
-                  const tex = mat[k];
-                  if (!tex) return;
-
-                  tex.wrapS = THREE.ClampToEdgeWrapping;
-                  tex.wrapT = THREE.ClampToEdgeWrapping;
-
-                  // Mipmaps & filtering
-                  if (!this.data.useMipmaps) {
-                    tex.generateMipmaps = false;
-                    tex.minFilter = THREE.LinearFilter;
-                  } else {
-                    tex.generateMipmaps = true;
-                    tex.minFilter = mapFilter[this.data.minFilter] || THREE.LinearMipmapLinearFilter;
-                  }
-                  tex.magFilter = THREE.LinearFilter;
-
-                  // Sharpen at glancing angles
-                  tex.anisotropy = targetAniso;
-
-                  tex.needsUpdate = true;
-                });
-
-              });
-            });
+          target.addEventListener('markerLost', () => {
+            target.object3D.visible = false;
+            this.tick = () => {};
           });
         }
       });
     </script>
   </head>
-
   <body style="margin:0; overflow:hidden;">
     <a-scene
       embedded
-      renderer="precision: high; antialias: true; logarithmicDepthBuffer: true"
-      arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false; detectionMode: mono; maxDetectionRate: 30"
+      renderer="antialias: true; logarithmicDepthBuffer: true"
       vr-mode-ui="enabled: false"
-    >
-      <!-- Marker -->
+      arjs="sourceType: webcam;
+            sourceWidth: 1280; sourceHeight: 720;
+            displayWidth: 1280; displayHeight: 720;
+            detectionMode: mono;
+            maxDetectionRate: 60;
+            debugUIEnabled: false">
+
+      <a-assets>
+        <a-asset-item id="model" src="model.glb"></a-asset-item>
+      </a-assets>
+
+      <!-- Marker with smoothing + event emits -->
       <a-marker
         type="pattern"
         url="p_poster.patt"
+        emitevents="true"
         smooth="true"
-        smoothCount="20"
+        smoothCount="15"
         smoothTolerance="0.01"
         smoothThreshold="5"
-      >
-        <a-entity
-          id="model"
-          gltf-model="poster.glb"
-          scale="2.0 2.0 2.0"
-          rotation="0 0 0"
-          fix-textures="anisotropy: 8; useMipmaps: false; minFilter: LinearMipmapLinearFilter"
-        ></a-entity>
+        debounced-visibility="stableFrames: 5">
+
+        <!-- Keep this anchor at neutral scale/position -->
+        <a-entity id="anchor" position="0 0 0" rotation="0 0 0">
+          <!-- Apply model scale here (keep around 0.05–0.3 if your model is large) -->
+          <a-entity
+            gltf-model="poster.glb"
+            scale="0.12 0.12 0.12"
+            no-frustum-cull>
+          </a-entity>
+        </a-entity>
       </a-marker>
 
       <a-entity camera></a-entity>
     </a-scene>
   </body>
 </html>
-
-
