@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title>AR.js lock-on demo</title>
+    <title>紙使用量削減！北川鉄工所 STEG電装課</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
 
@@ -9,167 +9,63 @@
     <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
     <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
 
-    <!-- Pose smoothing + lock-on components -->
+    <!-- Texture processing -->
     <script>
-      // Smooths pose while marker is visible (reduces micro-jitter before we lock).
-      AFRAME.registerComponent('pose-smoother', {
+      AFRAME.registerComponent('fix-textures', {
         schema: {
-          positionLerp: {type:'number', default: 0.25}, // 0..1 (higher = faster)
-          rotationLerp: {type:'number', default: 0.25}
+          anisotropy: {type: 'int', default: 8},
+          useMipmaps: {type: 'boolean', default: false}, 
+          minFilter:  {type: 'string',  default: 'LinearFilter'} 
         },
-        init() {
-          this._targetPos = new THREE.Vector3();
-          this._targetQuat = new THREE.Quaternion();
-          this._tmpPos = new THREE.Vector3();
-          this._tmpQuat = new THREE.Quaternion();
-          this._hasInit = false;
-        },
-        tick() {
-          const o = this.el.object3D;
-          // only smooth while marker entity is visible / updating
-          if (!this.el.object3D.visible) return;
+        init: function () {
+          const THREE = AFRAME.THREE;
+          const mapFilter = {
+            LinearFilter: THREE.LinearFilter,
+            NearestFilter: THREE.NearestFilter,
+            LinearMipmapLinearFilter: THREE.LinearMipmapLinearFilter,
+            LinearMipmapNearestFilter: THREE.LinearMipmapNearestFilter,
+            NearestMipmapNearestFilter: THREE.NearestMipmapNearestFilter,
+            NearestMipmapLinearFilter: THREE.NearestMipmapLinearFilter
+          };
 
-          if (!this._hasInit) {
-            o.getWorldPosition(this._targetPos);
-            o.getWorldQuaternion(this._targetQuat);
-            this._hasInit = true;
-          }
+          this.el.addEventListener('model-loaded', () => {
+            const renderer = this.el.sceneEl.renderer;
+            const maxAniso = renderer && renderer.capabilities ? renderer.capabilities.getMaxAnisotropy() : 1;
+            const targetAniso = Math.min(this.data.anisotropy, maxAniso || 1);
 
-          // read current world transform as "target"
-          o.getWorldPosition(this._tmpPos);
-          o.getWorldQuaternion(this._tmpQuat);
+            this.el.object3D.traverse((obj) => {
+              if (!obj.isMesh || !obj.material) return;
+              const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
 
-          // lerp/slerp towards target
-          this._targetPos.lerp(this._tmpPos, this.data.positionLerp);
-          THREE.Quaternion.slerp(this._targetQuat, this._tmpQuat, this._targetQuat, this.data.rotationLerp);
+              mats.forEach((mat) => {
+                ['map','metalnessMap','roughnessMap','normalMap','emissiveMap','aoMap'].forEach((k) => {
+                  const tex = mat[k];
+                  if (!tex) return;
 
-          // apply smoothed world pose back to local (relative to parent)
-          const parent = o.parent;
-          if (parent) {
-            parent.worldToLocal(this._targetPos);
-            o.position.copy(this._targetPos);
+                  tex.wrapS = THREE.ClampToEdgeWrapping;
+                  tex.wrapT = THREE.ClampToEdgeWrapping;
 
-            const parentWorldQuat = new THREE.Quaternion();
-            parent.getWorldQuaternion(parentWorldQuat);
-            parentWorldQuat.invert();
-            o.quaternion.copy(parentWorldQuat.multiply(this._targetQuat));
-          }
+                  // Mipmaps & filtering
+                  if (!this.data.useMipmaps) {
+                    tex.generateMipmaps = false;
+                    tex.minFilter = THREE.LinearFilter;
+                  } else {
+                    tex.generateMipmaps = true;
+                    tex.minFilter = mapFilter[this.data.minFilter] || THREE.LinearMipmapLinearFilter;
+                  }
+                  tex.magFilter = THREE.LinearFilter;
+
+                  // Sharpen at glancing angles
+                  tex.anisotropy = targetAniso;
+
+                  tex.needsUpdate = true;
+                });
+
+              });
+            });
+          });
         }
       });
-
-      // Locks the model after 'holdFrames' consecutive "stable" frames.
-      // Stable = tiny change in position & rotation across frames.
-      AFRAME.registerComponent('marker-lock', {
-        schema: {
-          target: {type:'selector'},         // the model inside the marker
-          holdFrames: {type:'int', default: 12},
-          posEps: {type:'number', default: 0.002},     // ~2mm
-          angEpsDeg: {type:'number', default: 0.6}     // ~0.6°
-        },
-        init() {
-          const marker = this.el;
-          this.modelEl = this.data.target;
-          this.locked = false;
-          this.framesStable = 0;
-
-          // Enable marker events
-          marker.setAttribute('emitevents', 'true');
-
-          this.prevPos = new THREE.Vector3();
-          this.prevQuat = new THREE.Quaternion();
-          this.tmpPos  = new THREE.Vector3();
-          this.tmpQuat = new THREE.Quaternion();
-
-          marker.addEventListener('markerFound', () => {
-            if (!this.locked) this.framesStable = 0;
-          });
-
-          marker.addEventListener('markerLost', () => {
-            if (!this.locked) this.framesStable = 0;
-          });
-
-          // Optional: press "U" to unlock and resume tracking
-          window.addEventListener('keydown', (e) => {
-            if (e.key.toLowerCase() === 'u' && this.locked) {
-              this.unlock();
-            }
-          });
-
-          this.firstSampled = false;
-        },
-        tick() {
-          if (this.locked) return;
-
-          // Only evaluate stability while the marker is being tracked (visible)
-          if (!this.el.object3D.visible || !this.modelEl) {
-            this.framesStable = 0;
-            this.firstSampled = false;
-            return;
-          }
-
-          const obj = this.modelEl.object3D;
-
-          obj.getWorldPosition(this.tmpPos);
-          obj.getWorldQuaternion(this.tmpQuat);
-
-          if (!this.firstSampled) {
-            this.prevPos.copy(this.tmpPos);
-            this.prevQuat.copy(this.tmpQuat);
-            this.firstSampled = true;
-            return;
-          }
-
-          const posDelta = this.tmpPos.distanceTo(this.prevPos);
-          const dot = Math.min(1, Math.max(-1, this.tmpQuat.dot(this.prevQuat)));
-          const angDelta = 2 * Math.acos(Math.abs(dot)); // radians
-
-          const angEps = THREE.MathUtils.degToRad(this.data.angEpsDeg);
-
-          if (posDelta < this.data.posEps && angDelta < angEps) {
-            this.framesStable++;
-          } else {
-            this.framesStable = 0;
-          }
-
-          this.prevPos.copy(this.tmpPos);
-          this.prevQuat.copy(this.tmpQuat);
-
-          if (this.framesStable >= this.data.holdFrames) {
-            this.lock();
-          }
-        },
-        lock() {
-          const scene = this.el.sceneEl.object3D;
-          const obj = this.modelEl.object3D;
-
-          // Re-parent model to the scene while preserving world transform.
-          scene.attach(obj);
-
-          // Freeze the transform so it won't be affected by future updates.
-          obj.updateMatrixWorld(true);
-          obj.matrixAutoUpdate = false;
-
-          // Hide the marker entity itself so it stops updating/rendering
-          this.el.setAttribute('visible', 'false');
-
-          this.locked = true;
-          console.log('[marker-lock] Locked model.');
-        },
-        unlock() {
-          const obj = this.modelEl.object3D;
-          obj.matrixAutoUpdate = true;
-          this.el.object3D.attach(obj); // reattach under marker
-          this.el.setAttribute('visible', 'true');
-          this.locked = false;
-          this.framesStable = 0;
-          console.log('[marker-lock] Unlocked model.');
-        }
-      });
-    </script>
-
-    <!-- (Optional) your existing texture-fix component can stay here if you use it -->
-    <script>
-      // Keep your existing fix-textures component here if needed.
     </script>
   </head>
 
@@ -180,32 +76,25 @@
       arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false; detectionMode: mono; maxDetectionRate: 30"
       vr-mode-ui="enabled: false"
     >
-      <!-- Camera -->
-      <a-entity camera></a-entity>
-
       <!-- Marker -->
       <a-marker
         type="pattern"
         url="p_poster.patt"
         smooth="true"
-        smoothCount="15"
-        smoothTolerance="0.05"
-        smoothThreshold="2"
-        marker-lock="target: #model; holdFrames: 12; posEps: 0.002; angEpsDeg: 0.6"
+        smoothCount="8"
+        smoothTolerance="0.01"
+        smoothThreshold="5"
       >
         <a-entity
           id="model"
           gltf-model="poster1.glb"
-          scale="1 1 1"
+          scale="1.0 1.0 1.0"
           rotation="0 0 0"
-          pose-smoother="positionLerp:0.35; rotationLerp:0.35"
+          fix-textures="anisotropy: 8; useMipmaps: false; minFilter: LinearMipmapLinearFilter"
         ></a-entity>
       </a-marker>
-    </a-scene>
 
-    <!-- Quick help overlay (optional) -->
-    <div style="position:fixed;left:12px;bottom:12px;padding:8px 10px;background:rgba(0,0,0,.55);color:#fff;font:14px/1.3 system-ui;border-radius:8px;">
-      Tracking… will auto-lock when stable. Press <b>U</b> to unlock.
-    </div>
+      <a-entity camera></a-entity>
+    </a-scene>
   </body>
 </html>
