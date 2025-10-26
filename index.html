@@ -66,34 +66,6 @@
           });
         }
       });
-    
-      const marker = document.querySelector('#marker');
-      const smoothed = document.querySelector('#smoothed');
-      let locked = false;
-
-    // Show model when marker is seen; on first time, freeze its transform.
-      marker.addEventListener('markerFound', () => {
-        smoothed.setAttribute('visible', true);
-
-        if (!locked) {
-        // Let smoothed-controls settle for ~2 frames, then freeze.
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              const p = smoothed.object3D.position.clone();
-              const r = smoothed.object3D.rotation.clone();
-
-            // Remove the tracking component -> stops following the marker.
-              smoothed.removeAttribute('smoothed-controls');
-
-            // Re-apply the last settled transform (absolute lock).
-              smoothed.object3D.position.copy(p);
-              smoothed.object3D.rotation.copy(r);
-
-              locked = true;
-            });
-          });
-        }
-      });
     </script>
   </head>
 
@@ -109,13 +81,13 @@
         type="pattern"
         url="p_poster.patt"
         smooth="true"
-        smoothCount="8"
+        smoothCount="50"
         smoothTolerance="0.01"
         smoothThreshold="5"
       >
         <a-entity
           id="model"
-          gltf-model="poster1.glb"
+          gltf-model="poster2.glb"
           scale="1.0 1.0 1.0"
           rotation="0 0 0"
           fix-textures="anisotropy: 8; useMipmaps: false; minFilter: LinearMipmapLinearFilter"
@@ -126,5 +98,3 @@
     </a-scene>
   </body>
 </html>
-
-
