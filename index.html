@@ -1,164 +1,100 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html>
   <head>
+    <title>紙使用量削減！北川鉄工所 STEG電装課</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>AR.js – Lock Once</title>
 
-    <!-- A-Frame -->
-    <script src="https://unpkg.com/aframe@1.5.0/dist/aframe.min.js"></script>
-    <!-- AR.js for A-Frame -->
-    <script src="https://unpkg.com/ar.js@3.4.5/aframe/build/aframe-ar.js"></script>
+    <!-- A-Frame + AR.js -->
+    <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
 
+    <!-- Texture processing -->
     <script>
-      // Helper: copy world transform (pos/quat/scale) from one object3D to another A-Frame entity
-      function copyWorldTransformToEntity(srcObj3D, dstEl) {
-        const p = new THREE.Vector3();
-        const q = new THREE.Quaternion();
-        const s = new THREE.Vector3();
-        srcObj3D.updateMatrixWorld(true);
-        srcObj3D.matrixWorld.decompose(p, q, s);
-
-        // Apply to destination (its parent is the scene)
-        const euler = new THREE.Euler().setFromQuaternion(q, 'YXZ');
-        dstEl.object3D.position.copy(p);
-        dstEl.object3D.quaternion.copy(q);
-        dstEl.object3D.scale.copy(s);
-        dstEl.object3D.rotation.set(euler.x, euler.y, euler.z);
-      }
-
-      // Component: one-time lock after marker is found (no UI)
-      AFRAME.registerComponent('lock-once-on-detect', {
+      AFRAME.registerComponent('fix-textures', {
         schema: {
-          marker: { type: 'selector' },   // the tracking marker entity
-          settleFrames: { default: 8 },   // collect a few frames to let pose stabilize
-          useSmoothingInstead: { default: false } // set true to use smoothed-controls option
+          anisotropy: {type: 'int', default: 8},
+          useMipmaps: {type: 'boolean', default: false}, 
+          minFilter:  {type: 'string',  default: 'LinearFilter'} 
         },
         init: function () {
-          this._found = false;
-          this._frameCount = 0;
+          const THREE = AFRAME.THREE;
+          const mapFilter = {
+            LinearFilter: THREE.LinearFilter,
+            NearestFilter: THREE.NearestFilter,
+            LinearMipmapLinearFilter: THREE.LinearMipmapLinearFilter,
+            LinearMipmapNearestFilter: THREE.LinearMipmapNearestFilter,
+            NearestMipmapNearestFilter: THREE.NearestMipmapNearestFilter,
+            NearestMipmapLinearFilter: THREE.NearestMipmapLinearFilter
+          };
 
-          const markerEl = this.data.marker;
-          if (!markerEl) {
-            console.warn('[lock-once-on-detect] marker not provided.');
-            return;
-          }
+          this.el.addEventListener('model-loaded', () => {
+            const renderer = this.el.sceneEl.renderer;
+            const maxAniso = renderer && renderer.capabilities ? renderer.capabilities.getMaxAnisotropy() : 1;
+            const targetAniso = Math.min(this.data.anisotropy, maxAniso || 1);
 
-          // If you prefer smoothing instead of hard lock, enable this block:
-          if (this.data.useSmoothingInstead) {
-            // Build a smoothed proxy that follows the marker with damping
-            const smoothed = document.createElement('a-entity');
-            smoothed.setAttribute('id', 'smoothed-proxy');
-            smoothed.setAttribute('smoothed-controls', {
-              markerEl: `#${markerEl.getAttribute('id')}`,
-              lerpPosition: 0.4,
-              lerpRotation: 0.1,
-              lerpScale: 0.4,
-              minVisibleDuration: 0.15,   // ignore single-frame flicker
-              maxAccumulateTime: 0.5
-            });
-            this.el.sceneEl.appendChild(smoothed);
+            this.el.object3D.traverse((obj) => {
+              if (!obj.isMesh || !obj.material) return;
+              const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
 
-            // Reparent our model under the smoothed proxy (comment out if hard-locking)
-            smoothed.appendChild(this.el);
-            return; // nothing else to do when smoothing
-          }
+              mats.forEach((mat) => {
+                ['map','metalnessMap','roughnessMap','normalMap','emissiveMap','aoMap'].forEach((k) => {
+                  const tex = mat[k];
+                  if (!tex) return;
 
-          // Hard-lock flow
-          markerEl.addEventListener('markerFound', () => {
-            this._found = true;
-            this._frameCount = 0;
-            this.el.setAttribute('visible', true);
-          });
+                  tex.wrapS = THREE.ClampToEdgeWrapping;
+                  tex.wrapT = THREE.ClampToEdgeWrapping;
 
-          markerEl.addEventListener('markerLost', () => {
-            // If we never locked (e.g., user moved too fast), just hide until next find
-            if (!this._locked) this.el.setAttribute('visible', false);
-          });
+                  // Mipmaps & filtering
+                  if (!this.data.useMipmaps) {
+                    tex.generateMipmaps = false;
+                    tex.minFilter = THREE.LinearFilter;
+                  } else {
+                    tex.generateMipmaps = true;
+                    tex.minFilter = mapFilter[this.data.minFilter] || THREE.LinearMipmapLinearFilter;
+                  }
+                  tex.magFilter = THREE.LinearFilter;
 
-          this._locked = false;
+                  // Sharpen at glancing angles
+                  tex.anisotropy = targetAniso;
 
-          // Per-frame: wait a few frames after detection, then freeze transform
-          this.el.sceneEl.addEventListener('renderstart', () => {
-            this.el.sceneEl.renderer.setAnimationLoop(() => {
-              if (this._locked || !this._found) return;
+                  tex.needsUpdate = true;
+                });
 
-              this._frameCount++;
-              // After settleFrames, snapshot the model's world transform and detach from marker
-              if (this._frameCount >= this.data.settleFrames) {
-                const model = this.el;                   // model entity to freeze
-                const markerObj = markerEl.object3D;     // current marker pose
-
-                // Make a new top-level anchor to hold the frozen transform
-                const frozen = document.createElement('a-entity');
-                frozen.setAttribute('id', 'frozen-anchor');
-                this.el.sceneEl.appendChild(frozen);
-
-                // Copy world transform from the model (currently under marker) to frozen anchor
-                // We copy from model.object3D so any local offsets are preserved.
-                copyWorldTransformToEntity(model.object3D, frozen);
-
-                // Move the model under the frozen anchor (so it keeps the captured transform)
-                frozen.appendChild(model);
-
-                // Optional: hide/disable marker visuals to avoid confusion
-                markerEl.setAttribute('visible', false);
-
-                this._locked = true;
-              }
+              });
             });
           });
         }
       });
     </script>
-
-    <style>
-      body { margin: 0; overflow: hidden; }
-      .a-enter-vr-button, .a-enter-ar-button { display:none; } /* AR.js handles camera */
-    </style>
   </head>
 
-  <body>
+  <body style="margin:0; overflow:hidden;">
     <a-scene
-      vr-mode-ui="enabled: false"
       embedded
       renderer="precision: high; antialias: true; logarithmicDepthBuffer: true"
-      arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3; patternRatio: 0.9;">
-
-      <!-- Camera -->
-      <a-entity camera></a-entity>
-
-      <!-- Marker (use preset or your .patt) -->
+      arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false; detectionMode: mono; maxDetectionRate: 30"
+      vr-mode-ui="enabled: false"
+    >
+      <!-- Marker -->
       <a-marker
-        id="marker"
         type="pattern"
         url="p_poster.patt"
-        emitevents="true">
-        <!-- When hard-locking, the model starts under the marker... -->
-        <!-- Replace the box with your GLB/GLTF model entity -->
+        smooth="true"
+        smoothCount="8"
+        smoothTolerance="0.01"
+        smoothThreshold="5"
+      >
         <a-entity
           id="model"
-          gltf-model="poster.glb"
-          position="0 0 0"
+          gltf-model="poster3.glb"
+          scale="0.4 0.4 0.4"
           rotation="0 0 0"
-          scale="0.5 0.5 0.5"
-          lock-once-on-detect="marker: #marker; settleFrames: 8; useSmoothingInstead: false">
-          <a-box depth="0.5" height="0.5" width="0.5"></a-box>
-          <!-- Example GLTF:
-          <a-gltf-model src="#yourModel" position="0 0 0" scale="0.5 0.5 0.5"></a-gltf-model>
-          -->
-        </a-entity>
+          fix-textures="anisotropy: 8; useMipmaps: false; minFilter: LinearMipmapLinearFilter"
+        ></a-entity>
       </a-marker>
 
-      <!-- Required for AR.js -->
-      <a-entity arjs-anchor></a-entity>
-      <a-entity arjs-hit-test></a-entity>
-
-      <!-- Assets (put your model here)
-      <a-assets>
-        <a-asset-item id="yourModel" src="models/yourModel.glb"></a-asset-item>
-      </a-assets>
-      -->
+      <a-entity camera></a-entity>
     </a-scene>
   </body>
 </html>
